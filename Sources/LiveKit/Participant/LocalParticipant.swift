@@ -265,11 +265,13 @@ public extension LocalParticipant {
     @objc
     @discardableResult
     func setMicrophone(enabled: Bool,
+                       trackName: String? = nil,
                        captureOptions: AudioCaptureOptions? = nil,
                        publishOptions: AudioPublishOptions? = nil) async throws -> LocalTrackPublication?
     {
         try await set(source: .microphone,
                       enabled: enabled,
+                      trackName: trackName,
                       captureOptions: captureOptions,
                       publishOptions: publishOptions)
     }
@@ -293,6 +295,7 @@ public extension LocalParticipant {
     @discardableResult
     func set(source: Track.Source,
              enabled: Bool,
+             trackName: String? = nil,
              captureOptions: CaptureOptions? = nil,
              publishOptions: TrackPublishOptions? = nil) async throws -> LocalTrackPublication?
     {
@@ -313,11 +316,11 @@ public extension LocalParticipant {
                 if source == .camera {
                     let localTrack = LocalVideoTrack.createCameraTrack(options: (captureOptions as? CameraCaptureOptions) ?? room._state.options.defaultCameraCaptureOptions,
                                                                        reportStatistics: room._state.options.reportRemoteTrackStatistics)
-                    return try await self._publish(track: localTrack, options: publishOptions)
+                    return try await self._publish(track: localTrack, trackName: trackName, options: publishOptions)
                 } else if source == .microphone {
                     let localTrack = LocalAudioTrack.createTrack(options: (captureOptions as? AudioCaptureOptions) ?? room._state.options.defaultAudioCaptureOptions,
                                                                  reportStatistics: room._state.options.reportRemoteTrackStatistics)
-                    return try await self._publish(track: localTrack, options: publishOptions)
+                    return try await self._publish(track: localTrack, trackName: trackName, options: publishOptions)
                 } else if source == .screenShareVideo {
                     #if os(iOS)
                     let localTrack: LocalVideoTrack
@@ -329,14 +332,14 @@ public extension LocalParticipant {
                     } else {
                         localTrack = LocalVideoTrack.createInAppScreenShareTrack(options: options)
                     }
-                    return try await self._publish(track: localTrack, options: publishOptions)
+                    return try await self._publish(track: localTrack, trackName: trackName, options: publishOptions)
                     #elseif os(macOS)
                     if #available(macOS 12.3, *) {
                         let mainDisplay = try await MacOSScreenCapturer.mainDisplaySource()
                         let track = LocalVideoTrack.createMacOSScreenShareTrack(source: mainDisplay,
                                                                                 options: (captureOptions as? ScreenShareCaptureOptions) ?? room._state.options.defaultScreenShareCaptureOptions,
                                                                                 reportStatistics: room._state.options.reportRemoteTrackStatistics)
-                        return try await self._publish(track: track, options: publishOptions)
+                        return try await self._publish(track: track, trackName: trackName, options: publishOptions)
                     }
                     #endif
                 }
@@ -438,7 +441,7 @@ extension [Livekit_SubscribedQuality] {
 
 private extension LocalParticipant {
     @discardableResult
-    private func _publish(track: LocalTrack, options: TrackPublishOptions? = nil) async throws -> LocalTrackPublication {
+    private func _publish(track: LocalTrack, trackName: String? = nil, options: TrackPublishOptions? = nil) async throws -> LocalTrackPublication {
         log("[publish] \(track) options: \(String(describing: options ?? nil))...", .info)
 
         let room = try requireRoom()
@@ -547,7 +550,7 @@ private extension LocalParticipant {
 
             // Request a new track to the server
             let addTrackResult = try await room.engine.signalClient.sendAddTrack(cid: track.mediaTrack.trackId,
-                                                                                 name: publishName ?? track.name,
+                                                                                 name: trackName ?? publishName ?? track.name,
                                                                                  type: track.kind.toPBType(),
                                                                                  source: track.source.toPBType(),
                                                                                  encryption: room.e2eeManager?.e2eeOptions.encryptionType.toPBType() ?? .none,
