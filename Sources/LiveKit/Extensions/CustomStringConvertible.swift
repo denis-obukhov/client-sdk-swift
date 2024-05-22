@@ -114,6 +114,17 @@ extension RTCPeerConnectionState {
     }
 }
 
+extension ConnectionState: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .disconnected: return ".disconnected"
+        case .connecting: return ".connecting"
+        case .reconnecting: return ".reconnecting"
+        case .connected: return ".connected"
+        }
+    }
+}
+
 extension ReconnectMode: CustomStringConvertible {
     public var description: String {
         switch self {
@@ -126,5 +137,15 @@ extension ReconnectMode: CustomStringConvertible {
 extension Livekit_SignalResponse: CustomStringConvertible {
     var description: String {
         "Livekit_SignalResponse(\(String(describing: message)))"
+    }
+}
+
+extension VideoView.RenderMode: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .auto: return ".auto"
+        case .metal: return ".metal"
+        case .sampleBuffer: return ".sampleBuffer"
+        }
     }
 }

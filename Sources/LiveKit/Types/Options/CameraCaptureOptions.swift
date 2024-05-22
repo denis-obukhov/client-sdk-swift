@@ -20,6 +20,9 @@ import Foundation
 @objc
 public class CameraCaptureOptions: NSObject, VideoCaptureOptions {
     @objc
+    public let device: AVCaptureDevice?
+
+    @objc
     public let position: AVCaptureDevice.Position
 
     @objc
@@ -35,6 +38,7 @@ public class CameraCaptureOptions: NSObject, VideoCaptureOptions {
 
     @objc
     override public init() {
+        device = nil
         position = .front
         preferredFormat = nil
         dimensions = .h720_169
@@ -42,33 +46,25 @@ public class CameraCaptureOptions: NSObject, VideoCaptureOptions {
     }
 
     @objc
-    public init(position: AVCaptureDevice.Position = .front,
+    public init(device: AVCaptureDevice? = nil,
+                position: AVCaptureDevice.Position = .front,
                 preferredFormat: AVCaptureDevice.Format? = nil,
                 dimensions: Dimensions = .h720_169,
                 fps: Int = 30)
     {
+        self.device = device
         self.position = position
         self.preferredFormat = preferredFormat
         self.dimensions = dimensions
         self.fps = fps
     }
 
-    public func copyWith(position: AVCaptureDevice.Position? = nil,
-                         preferredFormat: AVCaptureDevice.Format? = nil,
-                         dimensions: Dimensions? = nil,
-                         fps: Int? = nil) -> CameraCaptureOptions
-    {
-        CameraCaptureOptions(position: position ?? self.position,
-                             preferredFormat: preferredFormat ?? self.preferredFormat,
-                             dimensions: dimensions ?? self.dimensions,
-                             fps: fps ?? self.fps)
-    }
-
     // MARK: - Equal
 
     override public func isEqual(_ object: Any?) -> Bool {
         guard let other = object as? Self else { return false }
-        return position == other.position &&
+        return device == other.device &&
+            position == other.position &&
             preferredFormat == other.preferredFormat &&
             dimensions == other.dimensions &&
             fps == other.fps
@@ -76,10 +72,17 @@ public class CameraCaptureOptions: NSObject, VideoCaptureOptions {
 
     override public var hash: Int {
         var hasher = Hasher()
+        hasher.combine(device)
         hasher.combine(position)
         hasher.combine(preferredFormat)
         hasher.combine(dimensions)
         hasher.combine(fps)
         return hasher.finalize()
+    }
+
+    // MARK: - CustomStringConvertible
+
+    override public var description: String {
+        "CameraCaptureOptions(position: \(String(describing: position))"
     }
 }
