@@ -20,52 +20,35 @@ import Foundation
 import ReplayKit
 #endif
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 public class CameraCapturer: VideoCapturer {
+    /// Current device used for capturing
     @objc
-    public static func captureDevices() -> [AVCaptureDevice] {
-        let deviceTypes: [AVCaptureDevice.DeviceType]
-        #if os(iOS)
-        deviceTypes = [
-            .builtInDualCamera,
-            .builtInDualWideCamera,
-            .builtInTripleCamera,
-            .builtInWideAngleCamera,
-            .builtInTelephotoCamera,
-            .builtInUltraWideCamera,
-        ]
-        #else
-        deviceTypes = [
-            .builtInWideAngleCamera,
-        ]
-        #endif
+    public var device: AVCaptureDevice? { _cameraCapturerState.device }
 
-        let session = AVCaptureDevice.DiscoverySession(deviceTypes: deviceTypes,
-                                                       mediaType: .video,
-                                                       position: .unspecified)
-        return session.devices
+    /// Current position of the device
+    public var position: AVCaptureDevice.Position { _cameraCapturerState.device?.position ?? .unspecified }
+
+    @objc
+    public var options: CameraCaptureOptions { _cameraCapturerState.options }
+
+    @objc
+    public static func captureDevices() async throws -> [AVCaptureDevice] {
+        try await DeviceManager.shared.devices()
     }
 
     /// Checks whether both front and back capturing devices exist, and can be switched.
     @objc
-    public static func canSwitchPosition() -> Bool {
-        let devices = captureDevices()
+    public static func canSwitchPosition() async throws -> Bool {
+        let devices = try await captureDevices()
         return devices.contains(where: { $0.position == .front }) &&
             devices.contains(where: { $0.position == .back })
     }
-
-    /// Current device used for capturing
-    @objc
-    public private(set) var device: AVCaptureDevice?
-
-    /// Current position of the device
-    public var position: AVCaptureDevice.Position? {
-        device?.position
-    }
-
-    @objc
-    public var options: CameraCaptureOptions
 
     public var isMultitaskingAccessSupported: Bool {
         #if (os(iOS) || os(tvOS)) && !targetEnvironment(macCatalyst)
@@ -96,6 +79,13 @@ public class CameraCapturer: VideoCapturer {
         }
     }
 
+    struct State {
+        var options: CameraCaptureOptions
+        var device: AVCaptureDevice?
+    }
+
+    var _cameraCapturerState: StateSync<State>
+
     // Used to hide LKRTCVideoCapturerDelegate symbol
     private lazy var adapter: VideoCapturerDelegateAdapter = .init(cameraCapturer: self)
 
@@ -103,7 +93,7 @@ public class CameraCapturer: VideoCapturer {
     private lazy var capturer: LKRTCCameraVideoCapturer = DispatchQueue.liveKitWebRTC.sync { LKRTCCameraVideoCapturer(delegate: adapter) }
 
     init(delegate: LKRTCVideoCapturerDelegate, options: CameraCaptureOptions) {
-        self.options = options
+        _cameraCapturerState = StateSync(State(options: options))
         super.init(delegate: delegate)
 
         log("isMultitaskingAccessSupported: \(isMultitaskingAccessSupported)", .info)
@@ -122,13 +112,16 @@ public class CameraCapturer: VideoCapturer {
         return try await set(cameraPosition: position == .front ? .back : .front)
     }
 
-    /// Sets the camera's position to `.front` or `.back` when supported
+    /// Sets the camera's position to `.front` or `.back` when supported.
     @objc
     @discardableResult
     public func set(cameraPosition position: AVCaptureDevice.Position) async throws -> Bool {
         log("set(cameraPosition:) \(position)")
-
-        return try await set(options: options.copyWith(position: .value(position)))
+        let newOptions = options.copyWith(
+            device: .value(nil),
+            position: .value(position)
+        )
+        return try await set(options: newOptions)
     }
 
     /// Sets new options at runtime and resstarts capturing.
@@ -138,7 +131,7 @@ public class CameraCapturer: VideoCapturer {
         log("set(options:) \(options)")
 
         // Update to new options
-        options = newOptions
+        _cameraCapturerState.mutate { $0.options = newOptions }
 
         // Restart capturer
         return try await restartCapture()
@@ -157,7 +150,7 @@ public class CameraCapturer: VideoCapturer {
         var device: AVCaptureDevice? = options.device
 
         if device == nil {
-            let devices = CameraCapturer.captureDevices()
+            let devices = try await CameraCapturer.captureDevices()
             device = devices.first(where: { $0.position == self.options.position }) ?? devices.first
         }
 
@@ -218,20 +211,10 @@ public class CameraCapturer: VideoCapturer {
 
         log("starting camera capturer device: \(device), format: \(selectedFormat), fps: \(selectedFps)(\(fpsRange))", .info)
 
-        // adapt if requested dimensions and camera's dimensions don't match
-        if let videoSource = delegate as? LKRTCVideoSource,
-           selectedFormat.dimensions != self.options.dimensions
-        {
-            // self.log("adaptOutputFormat to: \(options.dimensions) fps: \(self.options.fps)")
-            videoSource.adaptOutputFormat(toWidth: options.dimensions.width,
-                                          height: options.dimensions.height,
-                                          fps: Int32(options.fps))
-        }
-
         try await capturer.startCapture(with: device, format: selectedFormat.format, fps: selectedFps)
 
         // Update internal vars
-        self.device = device
+        _cameraCapturerState.mutate { $0.device = device }
 
         return true
     }
@@ -245,8 +228,9 @@ public class CameraCapturer: VideoCapturer {
         await capturer.stopCapture()
 
         // Update internal vars
-        device = nil
-        dimensions = nil
+        set(dimensions: nil)
+        // Reset state
+        _cameraCapturerState.mutate { $0 = State(options: $0.options) }
 
         return true
     }
@@ -261,10 +245,8 @@ class VideoCapturerDelegateAdapter: NSObject, LKRTCVideoCapturerDelegate {
 
     func capturer(_ capturer: LKRTCVideoCapturer, didCapture frame: LKRTCVideoFrame) {
         guard let cameraCapturer else { return }
-        // Resolve real dimensions (apply frame rotation)
-        cameraCapturer.dimensions = Dimensions(width: frame.width, height: frame.height).apply(rotation: frame.rotation)
         // Pass frame to video source
-        cameraCapturer.delegate?.capturer(capturer, didCapture: frame)
+        cameraCapturer.capture(frame: frame, capturer: capturer, device: cameraCapturer.device, options: cameraCapturer.options)
     }
 }
 
@@ -279,7 +261,7 @@ public extension LocalVideoTrack {
                                   options: CameraCaptureOptions? = nil,
                                   reportStatistics: Bool = false) -> LocalVideoTrack
     {
-        let videoSource = Engine.createVideoSource(forScreenShare: false)
+        let videoSource = RTC.createVideoSource(forScreenShare: false)
         let capturer = CameraCapturer(delegate: videoSource, options: options ?? CameraCaptureOptions())
         return LocalVideoTrack(name: name ?? Track.cameraName,
                                source: .camera,

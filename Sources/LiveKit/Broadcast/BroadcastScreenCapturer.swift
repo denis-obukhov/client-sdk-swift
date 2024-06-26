@@ -22,7 +22,11 @@ import Foundation
 import UIKit
 #endif
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 class BroadcastScreenCapturer: BufferCapturer {
     static let kRTCScreensharingSocketFD = "rtc_SSFD"
@@ -50,7 +54,8 @@ class BroadcastScreenCapturer: BufferCapturer {
             .aspectFit(size: options.dimensions.max)
             .toEncodeSafeDimensions()
 
-        defer { self.dimensions = targetDimensions }
+        set(dimensions: targetDimensions)
+
         let frameReader = SocketConnectionFrameReader()
         guard let socketConnection = BroadcastServerSocketConnection(filePath: filePath, streamDelegate: frameReader)
         else { return false }
@@ -94,7 +99,7 @@ public extension LocalVideoTrack {
                                                    options: ScreenShareCaptureOptions = ScreenShareCaptureOptions(),
                                                    reportStatistics: Bool = false) -> LocalVideoTrack
     {
-        let videoSource = Engine.createVideoSource(forScreenShare: true)
+        let videoSource = RTC.createVideoSource(forScreenShare: true)
         let capturer = BroadcastScreenCapturer(delegate: videoSource, options: BufferCaptureOptions(from: options))
         return LocalVideoTrack(
             name: name,

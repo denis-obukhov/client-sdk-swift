@@ -16,7 +16,11 @@
 
 import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 extension TrackSettings: CustomStringConvertible {
     public var description: String {
@@ -147,5 +151,18 @@ extension VideoView.RenderMode: CustomStringConvertible {
         case .metal: return ".metal"
         case .sampleBuffer: return ".sampleBuffer"
         }
+    }
+}
+
+extension LKRTCRtpEncodingParameters {
+    func toDebugString() -> String {
+        "RTCRtpEncodingParameters(" +
+            "rid: \(String(describing: rid)), " +
+            "isActive: \(String(describing: isActive)), " +
+            "minBitrateBps: \(String(describing: minBitrateBps))" +
+            "maxBitrateBps: \(String(describing: maxBitrateBps))" +
+            "maxFramerate: \(String(describing: maxFramerate))" +
+            "scaleResolutionDownBy: \(String(describing: scaleResolutionDownBy))" +
+            ")"
     }
 }

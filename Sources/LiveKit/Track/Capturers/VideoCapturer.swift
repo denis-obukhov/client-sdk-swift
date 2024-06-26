@@ -16,16 +16,18 @@
 
 import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 protocol VideoCapturerProtocol {
     var capturer: LKRTCVideoCapturer { get }
 }
 
 extension VideoCapturerProtocol {
-    public var capturer: LKRTCVideoCapturer {
-        fatalError("Must be implemented")
-    }
+    public var capturer: LKRTCVideoCapturer { fatalError("Must be implemented") }
 }
 
 @objc
@@ -42,6 +44,7 @@ public class VideoCapturer: NSObject, Loggable, VideoCapturerProtocol {
     // MARK: - MulticastDelegate
 
     public let delegates = MulticastDelegate<VideoCapturerDelegate>(label: "VideoCapturerDelegate")
+    public let rendererDelegates = MulticastDelegate<VideoRenderer>(label: "VideoCapturerRendererDelegate")
 
     /// Array of supported pixel formats that can be used to capture a frame.
     ///
@@ -63,26 +66,33 @@ public class VideoCapturer: NSObject, Loggable, VideoCapturerProtocol {
         case started
     }
 
-    weak var delegate: LKRTCVideoCapturerDelegate?
+    private weak var delegate: LKRTCVideoCapturerDelegate?
 
     let dimensionsCompleter = AsyncCompleter<Dimensions>(label: "Dimensions", defaultTimeout: .defaultCaptureStart)
 
     struct State: Equatable {
         // Counts calls to start/stopCapturer so multiple Tracks can use the same VideoCapturer.
         var startStopCounter: Int = 0
+        var dimensions: Dimensions? = nil
     }
 
     var _state = StateSync(State())
 
-    public internal(set) var dimensions: Dimensions? {
-        didSet {
-            guard oldValue != dimensions else { return }
-            log("[publish] \(String(describing: oldValue)) -> \(String(describing: dimensions))")
-            delegates.notify { $0.capturer?(self, didUpdate: self.dimensions) }
+    public var dimensions: Dimensions? { _state.dimensions }
 
-            if let dimensions {
-                log("[publish] dimensions: \(String(describing: dimensions))")
-                dimensionsCompleter.resume(returning: dimensions)
+    func set(dimensions newValue: Dimensions?) {
+        let didUpdate = _state.mutate {
+            let oldDimensions = $0.dimensions
+            $0.dimensions = newValue
+            return newValue != oldDimensions
+        }
+
+        if didUpdate {
+            delegates.notify { $0.capturer?(self, didUpdate: newValue) }
+
+            if let newValue {
+                log("[publish] dimensions: \(String(describing: newValue))")
+                dimensionsCompleter.resume(returning: newValue)
             } else {
                 dimensionsCompleter.reset()
             }
@@ -172,5 +182,59 @@ public class VideoCapturer: NSObject, Loggable, VideoCapturerProtocol {
     public func restartCapture() async throws -> Bool {
         try await stopCapture()
         return try await startCapture()
+    }
+}
+
+extension VideoCapturer {
+    // Capture a RTCVideoFrame
+    func capture(frame: LKRTCVideoFrame,
+                 capturer: LKRTCVideoCapturer,
+                 device: AVCaptureDevice? = nil,
+                 options: VideoCaptureOptions)
+    {
+        _processFrame(frame, capturer: capturer, device: device, options: options)
+    }
+
+    // Capture a CMSampleBuffer
+    func capture(sampleBuffer: CMSampleBuffer,
+                 capturer: LKRTCVideoCapturer,
+                 options: VideoCaptureOptions)
+    {
+        delegate?.capturer(capturer, didCapture: sampleBuffer) { [weak self] frame in
+            self?._processFrame(frame, capturer: capturer, device: nil, options: options)
+        }
+    }
+
+    // Capture a CVPixelBuffer
+    func capture(pixelBuffer: CVPixelBuffer,
+                 capturer: LKRTCVideoCapturer,
+                 timeStampNs: Int64 = VideoCapturer.createTimeStampNs(),
+                 rotation: VideoRotation = ._0,
+                 options: VideoCaptureOptions)
+    {
+        delegate?.capturer(capturer, didCapture: pixelBuffer, timeStampNs: timeStampNs, rotation: rotation.toRTCType()) { [weak self] frame in
+            self?._processFrame(frame, capturer: capturer, device: nil, options: options)
+        }
+    }
+
+    // Process the captured frame
+    private func _processFrame(_ frame: LKRTCVideoFrame,
+                               capturer: LKRTCVideoCapturer,
+                               device: AVCaptureDevice?,
+                               options: VideoCaptureOptions)
+    {
+        // Resolve real dimensions (apply frame rotation)
+        set(dimensions: Dimensions(width: frame.width, height: frame.height).apply(rotation: frame.rotation))
+
+        delegate?.capturer(capturer, didCapture: frame)
+
+        if rendererDelegates.isDelegatesNotEmpty {
+            if let lkVideoFrame = frame.toLKType() {
+                rendererDelegates.notify { renderer in
+                    renderer.render?(frame: lkVideoFrame)
+                    renderer.render?(frame: lkVideoFrame, captureDevice: device, captureOptions: options)
+                }
+            }
+        }
     }
 }

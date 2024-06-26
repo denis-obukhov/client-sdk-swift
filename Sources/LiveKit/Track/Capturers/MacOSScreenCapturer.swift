@@ -21,27 +21,33 @@ import Foundation
 import ScreenCaptureKit
 #endif
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 #if os(macOS)
 
 @available(macOS 12.3, *)
 public class MacOSScreenCapturer: VideoCapturer {
-    private let capturer = Engine.createVideoCapturer()
+    private let capturer = RTC.createVideoCapturer()
 
     // TODO: Make it possible to change dynamically
     public let captureSource: MacOSScreenCaptureSource?
 
-    // SCStream
-    private var _scStream: SCStream?
-
-    // cached frame for resending to maintain minimum of 1 fps
-    private var _lastFrame: LKRTCVideoFrame?
-    private var _resendTimer: Task<Void, Error>?
-
     /// The ``ScreenShareCaptureOptions`` used for this capturer.
-    /// It is possible to modify the options but `restartCapture` must be called.
-    public var options: ScreenShareCaptureOptions
+    public let options: ScreenShareCaptureOptions
+
+    struct State {
+        // SCStream
+        var scStream: SCStream?
+        // Cached frame for resending to maintain minimum of 1 fps
+        var lastFrame: LKRTCVideoFrame?
+        var resendTimer: Task<Void, Error>?
+    }
+
+    private var _screenCapturerState = StateSync(State())
 
     init(delegate: LKRTCVideoCapturerDelegate, captureSource: MacOSScreenCaptureSource, options: ScreenShareCaptureOptions) {
         self.captureSource = captureSource
@@ -97,7 +103,7 @@ public class MacOSScreenCapturer: VideoCapturer {
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: nil)
         try await stream.startCapture()
 
-        _scStream = stream
+        _screenCapturerState.mutate { $0.scStream = stream }
 
         return true
     }
@@ -108,26 +114,28 @@ public class MacOSScreenCapturer: VideoCapturer {
         // Already stopped
         guard didStop else { return false }
 
-        guard let stream = _scStream else {
+        guard let stream = _screenCapturerState.read({ $0.scStream }) else {
             throw LiveKitError(.invalidState, message: "SCStream is nil")
         }
 
         // Stop resending paused frames
-        _resendTimer?.cancel()
-        _resendTimer = nil
+        _screenCapturerState.mutate {
+            $0.resendTimer?.cancel()
+            $0.resendTimer = nil
+        }
 
         try await stream.stopCapture()
         try stream.removeStreamOutput(self, type: .screen)
-        _scStream = nil
+
+        _screenCapturerState.mutate {
+            $0.scStream = nil
+        }
 
         return true
     }
 
     // Common capture func
     private func capture(_ sampleBuffer: CMSampleBuffer, contentRect: CGRect, scaleFactor: CGFloat = 1.0) {
-        // Exit if delegate is nil
-        guard let delegate else { return }
-
         // Get the pixel buffer that contains the image data.
         guard let pixelBuffer = sampleBuffer.imageBuffer else { return }
 
@@ -141,26 +149,24 @@ public class MacOSScreenCapturer: VideoCapturer {
             .aspectFit(size: options.dimensions.max)
             .toEncodeSafeDimensions()
 
-        // notify capturer for dimensions
-        defer { self.dimensions = targetDimensions }
+        let rtcPixelBuffer = LKRTCCVPixelBuffer(pixelBuffer: pixelBuffer,
+                                                adaptedWidth: targetDimensions.width,
+                                                adaptedHeight: targetDimensions.height,
+                                                cropWidth: sourceDimensions.width,
+                                                cropHeight: sourceDimensions.height,
+                                                cropX: Int32(contentRect.origin.x * scaleFactor),
+                                                cropY: Int32(contentRect.origin.y * scaleFactor))
 
-        let rtcBuffer = LKRTCCVPixelBuffer(pixelBuffer: pixelBuffer,
-                                           adaptedWidth: targetDimensions.width,
-                                           adaptedHeight: targetDimensions.height,
-                                           cropWidth: sourceDimensions.width,
-                                           cropHeight: sourceDimensions.height,
-                                           cropX: Int32(contentRect.origin.x * scaleFactor),
-                                           cropY: Int32(contentRect.origin.y * scaleFactor))
-
-        let rtcFrame = LKRTCVideoFrame(buffer: rtcBuffer,
+        let rtcFrame = LKRTCVideoFrame(buffer: rtcPixelBuffer,
                                        rotation: ._0,
                                        timeStampNs: timeStampNs)
 
-        // feed frame to WebRTC
-        delegate.capturer(capturer, didCapture: rtcFrame)
+        // Cache last frame
+        _screenCapturerState.mutate {
+            $0.lastFrame = rtcFrame
+        }
 
-        // cache last frame
-        _lastFrame = rtcFrame
+        capture(frame: rtcFrame, capturer: capturer, options: options)
     }
 }
 
@@ -175,17 +181,17 @@ extension MacOSScreenCapturer {
             return
         }
 
-        log("No movement detected, resending frame...")
+        log("No movement detected, resending frame...", .trace)
 
-        guard let delegate, let frame = _lastFrame else { return }
+        guard let frame = _screenCapturerState.read({ $0.lastFrame }) else { return }
 
         // create a new frame with new time stamp
         let newFrame = LKRTCVideoFrame(buffer: frame.buffer,
                                        rotation: frame.rotation,
                                        timeStampNs: Self.createTimeStampNs())
 
-        // feed frame to WebRTC
-        delegate.capturer(capturer, didCapture: newFrame)
+        // Feed frame to WebRTC
+        capture(frame: newFrame, capturer: capturer, options: options)
     }
 }
 
@@ -223,10 +229,8 @@ extension MacOSScreenCapturer: SCStreamOutput {
               // let contentScale = attachments[.contentScale] as? CGFloat,
               let scaleFactor = attachments[.scaleFactor] as? CGFloat else { return }
 
-        capture(sampleBuffer, contentRect: contentRect, scaleFactor: scaleFactor)
-
-        _resendTimer?.cancel()
-        _resendTimer = Task.detached(priority: .utility) { [weak self] in
+        // Schedule resend timer
+        let newTimer = Task.detached(priority: .utility) { [weak self] in
             while true {
                 try? await Task.sleep(nanoseconds: UInt64(1 * 1_000_000_000))
                 if Task.isCancelled { break }
@@ -234,6 +238,13 @@ extension MacOSScreenCapturer: SCStreamOutput {
                 try await self._capturePreviousFrame()
             }
         }
+
+        _screenCapturerState.mutate {
+            $0.resendTimer?.cancel()
+            $0.resendTimer = newTimer
+        }
+
+        capture(sampleBuffer, contentRect: contentRect, scaleFactor: scaleFactor)
     }
 }
 
@@ -247,7 +258,7 @@ public extension LocalVideoTrack {
                                             options: ScreenShareCaptureOptions = ScreenShareCaptureOptions(),
                                             reportStatistics: Bool = false) -> LocalVideoTrack
     {
-        let videoSource = Engine.createVideoSource(forScreenShare: true)
+        let videoSource = RTC.createVideoSource(forScreenShare: true)
         let capturer = MacOSScreenCapturer(delegate: videoSource, captureSource: source, options: options)
         return LocalVideoTrack(name: name,
                                source: .screenShareVideo,
