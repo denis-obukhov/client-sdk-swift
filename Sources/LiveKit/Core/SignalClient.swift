@@ -236,7 +236,7 @@ private extension SignalClient {
     func _onWebSocketMessage(message: URLSessionWebSocketTask.Message) async {
         let response: Livekit_SignalResponse? = {
             switch message {
-            case let .data(data): return try? Livekit_SignalResponse(contiguousBytes: data)
+            case let .data(data): return try? Livekit_SignalResponse(serializedData: data)
             case let .string(string): return try? Livekit_SignalResponse(jsonString: string)
             default: return nil
             }
@@ -339,10 +339,16 @@ private extension SignalClient {
             await _onReceivedPong(r)
 
         case .pongResp:
-            log("received pongResp message")
+            log("Received pongResp message")
 
         case .subscriptionResponse:
-            log("received subscriptionResponse message")
+            log("Received subscriptionResponse message")
+
+        case .errorResponse:
+            log("Received errorResponse message")
+
+        case .trackSubscribed:
+            log("Received trackSubscribed message")
         }
     }
 }
@@ -489,11 +495,26 @@ extension SignalClient {
         try await _sendRequest(r)
     }
 
-    func sendUpdateParticipant(metadata: String? = nil, name: String? = nil) async throws {
+    func sendUpdateParticipant(name: String? = nil,
+                               metadata: String? = nil,
+                               attributes: [String: String]? = nil) async throws
+    {
         let r = Livekit_SignalRequest.with {
             $0.updateMetadata = Livekit_UpdateParticipantMetadata.with {
-                $0.metadata = metadata ?? ""
                 $0.name = name ?? ""
+                $0.metadata = metadata ?? ""
+                $0.attributes = attributes ?? [:]
+            }
+        }
+
+        try await _sendRequest(r)
+    }
+
+    func sendUpdateLocalAudioTrack(trackSid: Track.Sid, features: Set<Livekit_AudioTrackFeature>) async throws {
+        let r = Livekit_SignalRequest.with {
+            $0.updateAudioTrack = Livekit_UpdateLocalAudioTrack.with {
+                $0.trackSid = trackSid.stringValue
+                $0.features = Array(features)
             }
         }
 
