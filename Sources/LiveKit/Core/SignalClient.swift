@@ -110,10 +110,11 @@ actor SignalClient: Loggable {
     }
 
     @discardableResult
-    func connect(_ urlString: String,
+    func connect(_ url: URL,
                  _ token: String,
                  connectOptions: ConnectOptions? = nil,
                  reconnectMode: ReconnectMode? = nil,
+                 participantSid: Participant.Sid? = nil,
                  adaptiveStream: Bool) async throws -> ConnectResponse
     {
         await cleanUp()
@@ -122,14 +123,12 @@ actor SignalClient: Loggable {
             log("[Connect] mode: \(String(describing: reconnectMode))")
         }
 
-        guard let url = Utils.buildUrl(urlString,
-                                       token,
-                                       connectOptions: connectOptions,
-                                       reconnectMode: reconnectMode,
-                                       adaptiveStream: adaptiveStream)
-        else {
-            throw LiveKitError(.failedToParseUrl)
-        }
+        let url = try Utils.buildUrl(url,
+                                     token,
+                                     connectOptions: connectOptions,
+                                     reconnectMode: reconnectMode,
+                                     participantSid: participantSid,
+                                     adaptiveStream: adaptiveStream)
 
         if reconnectMode != nil {
             log("[Connect] with url: \(url)")
@@ -151,7 +150,6 @@ actor SignalClient: Loggable {
                 } catch {
                     await self.cleanUp(withError: error)
                 }
-                self.log("Did exit WebSocket message loop...")
             }
 
             let connectResponse = try await _connectResponseCompleter.wait()
@@ -179,14 +177,12 @@ actor SignalClient: Loggable {
             await cleanUp(withError: error)
 
             // Validate...
-            guard let validateUrl = Utils.buildUrl(urlString,
-                                                   token,
-                                                   connectOptions: connectOptions,
-                                                   adaptiveStream: adaptiveStream,
-                                                   validate: true)
-            else {
-                throw LiveKitError(.failedToParseUrl, message: "Failed to parse validation url")
-            }
+            let validateUrl = try Utils.buildUrl(url,
+                                                 token,
+                                                 connectOptions: connectOptions,
+                                                 participantSid: participantSid,
+                                                 adaptiveStream: adaptiveStream,
+                                                 validate: true)
 
             log("Validating with url: \(validateUrl)...")
             let validationResponse = try await HTTP.requestString(from: validateUrl)
@@ -344,11 +340,11 @@ private extension SignalClient {
         case .subscriptionResponse:
             log("Received subscriptionResponse message")
 
-        case .errorResponse:
-            log("Received errorResponse message")
+        case .requestResponse:
+            log("Received requestResponse message")
 
-        case .trackSubscribed:
-            log("Received trackSubscribed message")
+        case let .trackSubscribed(trackSubscribed):
+            _delegate.notifyDetached { await $0.signalClient(self, didSubscribeTrack: Track.Sid(from: trackSubscribed.trackSid)) }
         }
     }
 }

@@ -16,20 +16,16 @@
 
 import Foundation
 
-#if swift(>=5.9)
-internal import LiveKitWebRTC
-#else
-@_implementationOnly import LiveKitWebRTC
-#endif
+extension URL {
+    var isValidForConnect: Bool {
+        host != nil && (scheme == "ws" || scheme == "wss" || scheme == "https" || scheme == "http")
+    }
 
-extension LKRTCConfiguration {
-    static func liveKitDefault() -> LKRTCConfiguration {
-        let result = DispatchQueue.liveKitWebRTC.sync { LKRTCConfiguration() }
-        result.sdpSemantics = .unifiedPlan
-        result.continualGatheringPolicy = .gatherContinually
-        result.candidateNetworkPolicy = .all
-        result.tcpCandidatePolicy = .enabled
+    var isValidForSocket: Bool {
+        host != nil && (scheme == "ws" || scheme == "wss")
+    }
 
-        return result
+    var isSecure: Bool {
+        scheme == "https" || scheme == "wss"
     }
 }
