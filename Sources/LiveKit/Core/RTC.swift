@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,8 +50,6 @@ private class VideoEncoderFactorySimulcast: LKRTCVideoEncoderFactorySimulcast {
 }
 
 class RTC {
-    static var bypassVoiceProcessing: Bool = false
-
     static let h264BaselineLevel5CodecInfo: LKRTCVideoCodecInfo = {
         // this should never happen
         guard let profileLevelId = LKRTCH264ProfileLevelId(profile: .constrainedBaseline, level: .level5) else {
@@ -89,7 +87,7 @@ class RTC {
 
         logger.log("Initializing PeerConnectionFactory...", type: Room.self)
 
-        return LKRTCPeerConnectionFactory(bypassVoiceProcessing: bypassVoiceProcessing,
+        return LKRTCPeerConnectionFactory(bypassVoiceProcessing: false,
                                           encoderFactory: encoderFactory,
                                           decoderFactory: decoderFactory,
                                           audioProcessingModule: audioProcessingModule)

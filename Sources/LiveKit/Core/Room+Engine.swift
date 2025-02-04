@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,8 +43,8 @@ extension Room {
     // Resets state of transports
     func cleanUpRTC() async {
         // Close data channels
-        await publisherDataChannel.reset()
-        await subscriberDataChannel.reset()
+        publisherDataChannel.reset()
+        subscriberDataChannel.reset()
 
         let (subscriber, publisher) = _state.read { ($0.subscriber, $0.publisher) }
 
@@ -69,6 +69,13 @@ extension Room {
     }
 
     func send(userPacket: Livekit_UserPacket, kind: Livekit_DataPacket.Kind) async throws {
+        try await send(dataPacket: .with {
+            $0.user = userPacket
+            $0.kind = kind
+        })
+    }
+
+    func send(dataPacket packet: Livekit_DataPacket) async throws {
         func ensurePublisherConnected() async throws {
             guard _state.isSubscriberPrimary else { return }
 
@@ -90,13 +97,13 @@ extension Room {
             log("publisher is not .connected", .error)
         }
 
-        let dataChannelIsOpen = await publisherDataChannel.isOpen
+        let dataChannelIsOpen = publisherDataChannel.isOpen
         if !dataChannelIsOpen {
             log("publisher data channel is not .open", .error)
         }
 
         // Should return true if successful
-        try await publisherDataChannel.send(userPacket: userPacket, kind: kind)
+        try publisherDataChannel.send(dataPacket: packet)
     }
 }
 
@@ -120,6 +127,8 @@ extension Room {
 
             if connectResponse.clientConfiguration.forceRelay == .enabled {
                 rtcConfiguration.iceTransportPolicy = .relay
+            } else {
+                rtcConfiguration.iceTransportPolicy = connectOptions.iceTransportPolicy.toRTCType()
             }
 
             return rtcConfiguration
@@ -163,8 +172,8 @@ extension Room {
             let lossyDataChannel = await publisher.dataChannel(for: LKRTCDataChannel.labels.lossy,
                                                                configuration: RTC.createDataChannelConfiguration(maxRetransmits: 0))
 
-            await publisherDataChannel.set(reliable: reliableDataChannel)
-            await publisherDataChannel.set(lossy: lossyDataChannel)
+            publisherDataChannel.set(reliable: reliableDataChannel)
+            publisherDataChannel.set(lossy: lossyDataChannel)
 
             log("dataChannel.\(String(describing: reliableDataChannel?.label)) : \(String(describing: reliableDataChannel?.channelId))")
             log("dataChannel.\(String(describing: lossyDataChannel?.label)) : \(String(describing: lossyDataChannel?.channelId))")
@@ -182,13 +191,9 @@ extension Room {
 
         } else if case .reconnect = connectResponse {
             log("[Connect] Configuring transports with RECONNECT response...")
-            guard let subscriber = _state.subscriber, let publisher = _state.publisher else {
-                log("[Connect] Subscriber or Publisher is nil", .error)
-                return
-            }
-
-            try await subscriber.set(configuration: rtcConfiguration)
-            try await publisher.set(configuration: rtcConfiguration)
+            let (subscriber, publisher) = _state.read { ($0.subscriber, $0.publisher) }
+            try await subscriber?.set(configuration: rtcConfiguration)
+            try await publisher?.set(configuration: rtcConfiguration)
         }
     }
 }
@@ -223,7 +228,7 @@ extension Room {
 
 // MARK: - Connection / Reconnection logic
 
-public enum StartReconnectReason {
+public enum StartReconnectReason: Sendable {
     case websocket
     case transport
     case networkSwitch
@@ -233,7 +238,7 @@ public enum StartReconnectReason {
 // Room+ConnectSequences
 extension Room {
     // full connect sequence, doesn't update connection state
-    func fullConnectSequence(_ url: String, _ token: String) async throws {
+    func fullConnectSequence(_ url: URL, _ token: String) async throws {
         let connectResponse = try await signalClient.connect(url,
                                                              token,
                                                              connectOptions: _state.connectOptions,
@@ -295,6 +300,7 @@ extension Room {
                                                                  token,
                                                                  connectOptions: _state.connectOptions,
                                                                  reconnectMode: _state.isReconnectingWithMode,
+                                                                 participantSid: localParticipant.sid,
                                                                  adaptiveStream: _state.roomOptions.adaptiveStream)
             try Task.checkCancellation()
 

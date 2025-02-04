@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,19 @@ extension XCTestCase {
         let asset = AVAsset(url: tempLocalUrl)
         let assetReader = try AVAssetReader(asset: asset)
 
-        guard let track = asset.tracks(withMediaType: .video).first else {
+        let tracks = try await {
+            #if os(visionOS)
+            return try await asset.loadTracks(withMediaType: .video)
+            #else
+            if #available(iOS 15.0, macOS 12.0, *) {
+                return try await asset.loadTracks(withMediaType: .video)
+            } else {
+                return asset.tracks(withMediaType: .video)
+            }
+            #endif
+        }()
+
+        guard let track = tracks.first else {
             XCTFail("No video track found in sample video file")
             fatalError()
         }
@@ -173,8 +185,8 @@ class AudioTrackWatcher: AudioRenderer {
         }
     }
 
-    func render(sampleBuffer: CMSampleBuffer) {
-        print("did receive first audio frame: \(String(describing: sampleBuffer))")
+    func render(pcmBuffer: AVAudioPCMBuffer) {
+        print("did receive first audio frame: \(String(describing: pcmBuffer))")
 
         _state.mutate {
             if !$0.didRenderFirstFrame {

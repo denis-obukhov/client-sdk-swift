@@ -18,7 +18,7 @@ let package = Package(
     ],
     dependencies: [
         // LK-Prefixed Dynamic WebRTC XCFramework
-        .package(url: "https://github.com/livekit/webrtc-xcframework.git", exact: "125.6422.02"),
+        .package(url: "https://github.com/livekit/webrtc-xcframework.git", exact: "125.6422.16"),
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.26.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.4"),
         // Only used for DocC generation
@@ -28,11 +28,16 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "LKObjCHelpers",
+            publicHeadersPath: "include"
+        ),
+        .target(
             name: "LiveKit",
             dependencies: [
                 .product(name: "LiveKitWebRTC", package: "webrtc-xcframework"),
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
                 .product(name: "Logging", package: "swift-log"),
+                "LKObjCHelpers",
             ],
             resources: [
                 .process("PrivacyInfo.xcprivacy"),

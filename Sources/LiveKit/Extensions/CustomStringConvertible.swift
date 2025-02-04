@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import AVFoundation
 import Foundation
 
 #if swift(>=5.9)
@@ -163,6 +164,28 @@ extension LKRTCRtpEncodingParameters {
             "maxBitrateBps: \(String(describing: maxBitrateBps))" +
             "maxFramerate: \(String(describing: maxFramerate))" +
             "scaleResolutionDownBy: \(String(describing: scaleResolutionDownBy))" +
+            ")"
+    }
+}
+
+extension AVCaptureDevice.Format {
+    func toDebugString() -> String {
+        var values: [String] = []
+        values.append("fps: \(fpsRange())")
+        #if os(iOS)
+        values.append("isMulticamSupported: \(isMultiCamSupported)")
+        #endif
+        return "Format(\(values.joined(separator: ", ")))"
+    }
+}
+
+extension LKRTCAudioProcessingConfig {
+    func toDebugString() -> String {
+        "RTCAudioProcessingConfig(" +
+            "isEchoCancellationEnabled: \(isEchoCancellationEnabled), " +
+            "isNoiseSuppressionEnabled: \(isNoiseSuppressionEnabled), " +
+            "isAutoGainControl1Enabled: \(isAutoGainControl1Enabled), " +
+            "isHighpassFilterEnabled: \(isHighpassFilterEnabled)" +
             ")"
     }
 }
